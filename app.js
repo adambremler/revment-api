@@ -6,6 +6,9 @@ const logger = require('morgan');
 const cors = require('cors');
 const mongoose = require('mongoose');
 require('dotenv').config();
+const storeTokenMiddleware = require('./middleware/storeToken');
+const checkAuthMiddleware = require('./middleware/checkAuth');
+const rejectExpiredTokenMiddleware = require('./middleware/rejectExpiredToken');
 
 const indexRouter = require('./routes/index');
 const usersRouter = require('./routes/users');
@@ -23,6 +26,9 @@ app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(cors());
+app.use(storeTokenMiddleware);
+app.use(checkAuthMiddleware);
+app.use(rejectExpiredTokenMiddleware);
 
 app.use('/', indexRouter);
 app.use('/users', usersRouter);
