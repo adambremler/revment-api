@@ -6,13 +6,29 @@ const isReachable = require('is-reachable');
 const normalizeUrl = require('normalize-url');
 const compareUrls = require('compare-urls');
 const puppeteer = require('puppeteer');
+const download = require('image-downloader');
 const uuidv4 = require('uuid/v4');
+const escapeRegex = require('../helpers/escapeRegex');
 
 // Search
-router.get('/search', (req, res) => {
+router.get('/search', async (req, res) => {
     const query = req.query.q;
+
+    if (!query) {
+        return res.status(400).json({ error: 'No query provided' });
+    }
+
+    const regex = new RegExp(escapeRegex(query), 'gi');
+    const urls = await URLModel.find({ url: regex }).limit(5);
+
+    return res.json({
+        results: {
+            urls: urls.map(u => u.getPrepared())
+        }
+    });
 });
 
+// Get URL by ID
 router.get('/:id', async (req, res) => {
     const id = req.params.id;
 
@@ -31,6 +47,7 @@ router.get('/:id', async (req, res) => {
     });
 });
 
+// Get URL by URL (create if doesn't exist)
 router.get('/', async (req, res) => {
     const inputURL = req.query.url;
 
@@ -48,11 +65,7 @@ router.get('/', async (req, res) => {
 
     if (existingURL) {
         return res.json({
-            url: {
-                id: existingURL.id,
-                url: existingURL.url,
-                screenshotPath: existingURL.screenshotPath
-            }
+            url: existingURL.getPrepared()
         });
     }
 
@@ -67,7 +80,7 @@ router.get('/', async (req, res) => {
     do {
         const screenshotID = uuidv4();
 
-        screenshotPath = `images/urls/${screenshotID}.png`;
+        screenshotPath = `images/urls/screenshots/${screenshotID}.png`;
     } while (await URLModel.findOne({ screenshotPath }));
 
     const browser = await puppeteer.launch({
@@ -80,26 +93,47 @@ router.get('/', async (req, res) => {
 
     const page = await browser.newPage();
     await page.goto(normalizedURL);
+
+    let faviconPath = null;
+
+    const faviconURL = `https://www.google.com/s2/favicons?domain=${normalizedURL}`;
+
+    do {
+        const faviconID = uuidv4();
+
+        faviconPath = `images/urls/favicons/${faviconID}.jpg`;
+    } while (await URLModel.findOne({ faviconPath }));
+
+    const downloadOptions = {
+        url: faviconURL,
+        dest: `public/${faviconPath}`
+    };
+
+    try {
+        await download.image(downloadOptions);
+    } catch (e) {
+        return res.status(500).json({ error: 'An error occurred' });
+    }
+
+    const title = await page.title();
     await page.screenshot({ path: `public/${screenshotPath}` });
 
     await browser.close();
 
     await new URLModel({
         url: urlToSave,
-        screenshotPath
+        screenshotPath,
+        faviconPath,
+        title
     })
         .save()
         .then(url => {
             return res.status(201).json({
-                url: {
-                    id: url.id,
-                    url: url.url,
-                    screenshotPath: url.screenshotPath
-                }
+                url: url.getPrepared()
             });
         })
         .catch(() => {
-            res.status(500).json({ error: 'An error occurred' });
+            return res.status(500).json({ error: 'An error occurred' });
         });
 });
 
