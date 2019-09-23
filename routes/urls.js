@@ -9,10 +9,11 @@ const puppeteer = require('puppeteer');
 const download = require('image-downloader');
 const uuidv4 = require('uuid/v4');
 const escapeRegex = require('../helpers/escapeRegex');
+const getComparableURL = require('../helpers/getComparableURL');
 
 // Search
 router.get('/search', async (req, res) => {
-    const query = req.query.q;
+    const query = getComparableURL(req.query.q);
 
     if (!query) {
         return res.status(400).json({ error: 'No query provided' });
@@ -21,10 +22,16 @@ router.get('/search', async (req, res) => {
     const regex = new RegExp(escapeRegex(query), 'gi');
     const urls = await URLModel.find({ url: regex }).limit(5);
 
+    const results = {
+        urls: urls.map(u => ({
+            ...u.getPrepared(),
+            exactMatch: compareUrls(u.url, query)
+        }))
+    };
+
     return res.json({
-        results: {
-            urls: urls.map(u => u.getPrepared())
-        }
+        isQueryReachable: await isReachable(query),
+        results
     });
 });
 
@@ -39,11 +46,7 @@ router.get('/:id', async (req, res) => {
     }
 
     return res.json({
-        url: {
-            id: url.id,
-            url: url.url,
-            screenshotPath: url.screenshotPath
-        }
+        url: url.getPrepared()
     });
 });
 
@@ -55,10 +58,7 @@ router.get('/', async (req, res) => {
         return res.status(400).json({ error: 'No URL received' });
     }
 
-    urlToSave = normalizeUrl(inputURL, {
-        stripHash: true,
-        stripProtocol: true
-    });
+    urlToSave = getComparableURL(inputURL);
 
     // Better solution later, JSON to prevent differences in parameter order?
     const existingURL = await URLModel.findOne({ url: urlToSave });
@@ -115,7 +115,7 @@ router.get('/', async (req, res) => {
         return res.status(500).json({ error: 'An error occurred' });
     }
 
-    const title = await page.title();
+    const title = (await page.title()) || 'No title found';
     await page.screenshot({ path: `public/${screenshotPath}` });
 
     await browser.close();
