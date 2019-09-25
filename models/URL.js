@@ -20,7 +20,12 @@ const URLSchema = new mongoose.Schema({
         type: String,
         required: true
     },
-    registration_date: {
+    registeredBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        required: true
+    },
+    registrationDate: {
         type: Date,
         default: Date.now,
         required: true
@@ -28,13 +33,22 @@ const URLSchema = new mongoose.Schema({
 });
 
 URLSchema.index({ url: 'text' });
-URLSchema.methods.getPrepared = function getPrepared() {
+URLSchema.methods.getPrepared = async function getPrepared() {
+    const url = await this.model('URL')
+        .findById(this.id)
+        .populate('registeredBy');
+
     return {
-        id: this.id,
-        url: this.url,
-        screenshotPath: this.screenshotPath,
-        faviconPath: this.faviconPath,
-        title: this.title
+        id: url.id,
+        url: url.url,
+        screenshotPath: url.screenshotPath,
+        faviconPath: url.faviconPath,
+        title: url.title,
+        registeredBy: {
+            id: url.registeredBy.id,
+            username: url.registeredBy.username
+        },
+        registrationDate: url.registrationDate
     };
 };
 

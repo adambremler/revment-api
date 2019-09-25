@@ -23,10 +23,12 @@ router.get('/search', async (req, res) => {
     const urls = await URLModel.find({ url: regex }).limit(5);
 
     const results = {
-        urls: urls.map(u => ({
-            ...u.getPrepared(),
-            exactMatch: compareUrls(u.url, query)
-        }))
+        urls: await Promise.all(
+            urls.map(async u => ({
+                ...(await u.getPrepared()),
+                exactMatch: compareUrls(u.url, query)
+            }))
+        )
     };
 
     return res.json({
@@ -46,7 +48,7 @@ router.get('/:id', async (req, res) => {
     }
 
     return res.json({
-        url: url.getPrepared()
+        url: await url.getPrepared()
     });
 });
 
@@ -65,8 +67,14 @@ router.get('/', async (req, res) => {
 
     if (existingURL) {
         return res.json({
-            url: existingURL.getPrepared()
+            url: await existingURL.getPrepared()
         });
+    }
+
+    if (!req.user) {
+        return res
+            .status(401)
+            .json({ error: 'You need to be logged in to register a URL' });
     }
 
     normalizedURL = normalizeUrl(urlToSave);
@@ -87,7 +95,7 @@ router.get('/', async (req, res) => {
         defaultViewport: {
             width: 1280,
             height: 720,
-            deviceScaleFactor: 0.5
+            deviceScaleFactor: 1
         }
     });
 
@@ -124,12 +132,13 @@ router.get('/', async (req, res) => {
         url: urlToSave,
         screenshotPath,
         faviconPath,
-        title
+        title,
+        registeredBy: req.user.id
     })
         .save()
-        .then(url => {
+        .then(async url => {
             return res.status(201).json({
-                url: url.getPrepared()
+                url: await url.getPrepared()
             });
         })
         .catch(() => {
