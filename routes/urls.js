@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
 const URLModel = require('../models/URL');
+const URLVote = require('../models/URLVote');
 const isReachable = require('is-reachable');
 const normalizeUrl = require('normalize-url');
 const compareUrls = require('compare-urls');
@@ -25,7 +26,7 @@ router.get('/search', async (req, res) => {
     const results = {
         urls: await Promise.all(
             urls.map(async u => ({
-                ...(await u.getPrepared()),
+                ...(await u.getPrepared(req.user.id)),
                 exactMatch: compareUrls(u.url, query)
             }))
         )
@@ -48,8 +49,102 @@ router.get('/:id', async (req, res) => {
     }
 
     return res.json({
-        url: await url.getPrepared()
+        url: await url.getPrepared(req.user.id)
     });
+});
+
+// Toggle vote
+router.post('/:id/vote', async (req, res) => {
+    if (!req.user) {
+        return res
+            .status(401)
+            .json({ error: 'You need to be logged in to vote' });
+    }
+
+    const voteValue = req.body.value;
+
+    if (voteValue !== 1 && voteValue !== -1) {
+        return res.status(400).json({ error: 'Invalid value' });
+    }
+
+    const urlID = req.params.id;
+
+    const url = await URLModel.findById(urlID);
+
+    if (!url) {
+        return res.status(400).json({ error: 'That URL does not exist' });
+    }
+
+    const previousVote = await URLVote.findOne({
+        user: req.user.id,
+        url: urlID
+    });
+
+    if (previousVote) {
+        if (voteValue === 1) {
+            if (previousVote.value === 1) {
+                await URLVote.deleteOne({ _id: previousVote.id }).exec();
+                await URLModel.updateOne(
+                    { _id: previousVote.url },
+                    { $inc: { points: -1 } }
+                ).exec();
+            } else if (previousVote.value === -1) {
+                await URLVote.updateOne(
+                    { _id: previousVote.id },
+                    { value: 1, registrationDate: new Date() }
+                ).exec();
+                await URLModel.updateOne(
+                    { _id: previousVote.url },
+                    { $inc: { points: 2 } }
+                ).exec();
+            }
+        } else if (voteValue === -1) {
+            if (previousVote.value === -1) {
+                await URLVote.deleteOne({ _id: previousVote.id }).exec();
+                await URLModel.updateOne(
+                    { _id: previousVote.url },
+                    { $inc: { points: 1 } }
+                ).exec();
+            } else if (previousVote.value === 1) {
+                await URLVote.updateOne(
+                    { _id: previousVote.id },
+                    { value: -1, registrationDate: new Date() }
+                ).exec();
+                await URLModel.updateOne(
+                    { _id: previousVote.url },
+                    { $inc: { points: -2 } }
+                ).exec();
+            }
+        }
+
+        const newURL = await URLModel.findById(urlID);
+
+        return res
+            .status(200)
+            .json({ url: await newURL.getPrepared(req.user.id) });
+    } else {
+        await new URLVote({
+            user: req.user.id,
+            url: urlID,
+            value: voteValue
+        })
+            .save()
+            .then(async () => {
+                await URLModel.updateOne(
+                    { _id: urlID },
+                    { $inc: { points: voteValue } }
+                );
+
+                const newURL = await URLModel.findById(urlID);
+
+                return res
+                    .status(201)
+                    .json({ url: await newURL.getPrepared(req.user.id) });
+            })
+            .catch(() => {
+                return res.status(500).json({ error: 'An error occurred' });
+            });
+    }
 });
 
 // Get URL by URL (create if doesn't exist)
@@ -67,7 +162,7 @@ router.get('/', async (req, res) => {
 
     if (existingURL) {
         return res.json({
-            url: await existingURL.getPrepared()
+            url: await existingURL.getPrepared(req.user.id)
         });
     }
 
@@ -138,7 +233,7 @@ router.get('/', async (req, res) => {
         .save()
         .then(async url => {
             return res.status(201).json({
-                url: await url.getPrepared()
+                url: await url.getPrepared(req.user.id)
             });
         })
         .catch(() => {
