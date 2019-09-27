@@ -25,6 +25,11 @@ const URLSchema = new mongoose.Schema({
         ref: 'User',
         required: true
     },
+    points: {
+        type: Number,
+        default: 0,
+        required: true
+    },
     registrationDate: {
         type: Date,
         default: Date.now,
@@ -33,10 +38,17 @@ const URLSchema = new mongoose.Schema({
 });
 
 URLSchema.index({ url: 'text' });
-URLSchema.methods.getPrepared = async function getPrepared() {
+URLSchema.methods.getPrepared = async function getPrepared(userID = null) {
     const url = await this.model('URL')
         .findById(this.id)
         .populate('registeredBy');
+
+    if (userID) {
+        var vote = await this.model('URLVote').findOne({
+            url: url.id,
+            user: userID
+        });
+    }
 
     return {
         id: url.id,
@@ -48,7 +60,9 @@ URLSchema.methods.getPrepared = async function getPrepared() {
             id: url.registeredBy.id,
             username: url.registeredBy.username
         },
-        registrationDate: url.registrationDate
+        points: url.points,
+        registrationDate: url.registrationDate,
+        ...(vote ? { voteValue: vote.value } : {})
     };
 };
 
