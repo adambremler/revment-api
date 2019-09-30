@@ -3,6 +3,7 @@ const router = express.Router();
 const User = require('../models/User');
 const URLModel = require('../models/URL');
 const URLVote = require('../models/URLVote');
+const Comment = require('../models/Comment');
 const isReachable = require('is-reachable');
 const normalizeUrl = require('normalize-url');
 const compareUrls = require('compare-urls');
@@ -21,7 +22,9 @@ router.get('/search', async (req, res) => {
     }
 
     const regex = new RegExp(escapeRegex(query), 'gi');
-    const urls = await URLModel.find({ url: regex }).limit(5);
+    const urls = await URLModel.find({ url: regex })
+        .sort({ points: 'desc' })
+        .limit(5);
 
     const results = {
         urls: await Promise.all(
@@ -145,6 +148,63 @@ router.post('/:id/vote', async (req, res) => {
                 return res.status(500).json({ error: 'An error occurred' });
             });
     }
+});
+
+// Get comments
+router.get('/:id/comments', async (req, res) => {
+    const urlID = req.params.id;
+
+    const url = await URLModel.findById(urlID);
+
+    if (!url) {
+        return res.status(400).json({ error: 'That URL does not exist' });
+    }
+
+    const comments = await Promise.all(
+        (await Comment.find({ url: urlID })).map(
+            async c => await c.getPrepared()
+        )
+    );
+
+    return res.status(200).json({ comments });
+});
+
+// Post comment
+router.post('/:id/comments', async (req, res) => {
+    if (!req.user) {
+        return res
+            .status(401)
+            .json({ error: 'You need to be logged in to comment' });
+    }
+
+    const commentText = req.body.text;
+
+    if (!commentText) {
+        return res.status(400).json({ error: 'No comment text received' });
+    }
+
+    const urlID = req.params.id;
+
+    const url = await URLModel.findById(urlID);
+
+    if (!url) {
+        return res.status(400).json({ error: 'That URL does not exist' });
+    }
+
+    await new Comment({
+        url: urlID,
+        user: req.user.id,
+        text: commentText
+    })
+        .save()
+        .then(async comment => {
+            return res.status(201).json({
+                comment: await comment.getPrepared()
+            });
+        })
+        .catch(() => {
+            return res.status(500).json({ error: 'An error occurred' });
+        });
 });
 
 // Get URL by URL (create if doesn't exist)
