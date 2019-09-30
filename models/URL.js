@@ -50,6 +50,8 @@ URLSchema.methods.getPrepared = async function getPrepared(userID = null) {
         });
     }
 
+    const commentCount = await this.model('Comment').count({ url: this.id });
+
     return {
         id: url.id,
         url: url.url,
@@ -62,7 +64,8 @@ URLSchema.methods.getPrepared = async function getPrepared(userID = null) {
         },
         points: url.points,
         registrationDate: url.registrationDate,
-        ...(vote ? { voteValue: vote.value } : {})
+        ...(vote ? { voteValue: vote.value } : {}),
+        commentCount
     };
 };
 
