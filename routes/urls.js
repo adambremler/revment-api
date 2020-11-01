@@ -4,6 +4,7 @@ const User = require('../models/User');
 const URLModel = require('../models/URL');
 const URLVote = require('../models/URLVote');
 const Comment = require('../models/Comment');
+const CommentVote = require('../models/CommentVote');
 const isReachable = require('is-reachable');
 const normalizeUrl = require('normalize-url');
 const compareUrls = require('compare-urls');
@@ -162,7 +163,7 @@ router.get('/:id/comments', async (req, res) => {
 
     const comments = await Promise.all(
         (await Comment.find({ url: urlID })).map(
-            async c => await c.getPrepared()
+            async c => await c.getPrepared(req.user.id)
         )
     );
 
@@ -191,20 +192,154 @@ router.post('/:id/comments', async (req, res) => {
         return res.status(400).json({ error: 'That URL does not exist' });
     }
 
-    await new Comment({
-        url: urlID,
-        user: req.user.id,
-        text: commentText
-    })
-        .save()
-        .then(async comment => {
-            return res.status(201).json({
-                comment: await comment.getPrepared()
-            });
+    const parentCommentID = req.body.parentCommentID;
+
+    // If the comment was sent as a reply to another comment
+    if (parentCommentID) {
+        const parentComment = await Comment.findById(parentCommentID);
+
+        if (!parentComment) {
+            return res
+                .status(400)
+                .json({ error: 'That comment does not exist' });
+        }
+
+        await new Comment({
+            url: urlID,
+            user: req.user.id,
+            text: commentText,
+            parentComment: parentCommentID,
+            parentCommentsCount: parentComment.parentCommentsCount + 1
         })
-        .catch(() => {
-            return res.status(500).json({ error: 'An error occurred' });
-        });
+            .save()
+            .then(async comment => {
+                return res.status(201).json({
+                    comment: await comment.getPrepared(req.user.id)
+                });
+            })
+            .catch(e => {
+                return res.status(500).json({ error: 'An error occurred' });
+            });
+    } else {
+        await new Comment({
+            url: urlID,
+            user: req.user.id,
+            text: commentText,
+            parentCommentsCount: 0
+        })
+            .save()
+            .then(async comment => {
+                return res.status(201).json({
+                    comment: await comment.getPrepared(req.user.id)
+                });
+            })
+            .catch(() => {
+                return res.status(500).json({ error: 'An error occurred' });
+            });
+    }
+});
+
+// Toggle comment vote
+router.post('/:urlID/comments/:commentID/vote', async (req, res) => {
+    if (!req.user) {
+        return res
+            .status(401)
+            .json({ error: 'You need to be logged in to vote' });
+    }
+
+    const voteValue = req.body.value;
+
+    if (voteValue !== 1 && voteValue !== -1) {
+        return res.status(400).json({ error: 'Invalid value' });
+    }
+
+    const urlID = req.params.urlID;
+
+    const url = await URLModel.findById(urlID);
+
+    if (!url) {
+        return res.status(400).json({ error: 'That URL does not exist' });
+    }
+
+    const commentID = req.params.commentID;
+
+    const comment = await Comment.findById(commentID);
+
+    if (!comment) {
+        return res.status(400).json({ error: 'That comment does not exist' });
+    }
+
+    const previousVote = await CommentVote.findOne({
+        user: req.user.id,
+        comment: commentID
+    });
+
+    if (previousVote) {
+        if (voteValue === 1) {
+            if (previousVote.value === 1) {
+                await CommentVote.deleteOne({ _id: previousVote.id }).exec();
+                await Comment.updateOne(
+                    { _id: previousVote.comment },
+                    { $inc: { points: -1 } }
+                ).exec();
+            } else if (previousVote.value === -1) {
+                await CommentVote.updateOne(
+                    { _id: previousVote.id },
+                    { value: 1, registrationDate: new Date() }
+                ).exec();
+                await Comment.updateOne(
+                    { _id: previousVote.comment },
+                    { $inc: { points: 2 } }
+                ).exec();
+            }
+        } else if (voteValue === -1) {
+            if (previousVote.value === -1) {
+                await CommentVote.deleteOne({ _id: previousVote.id }).exec();
+                await Comment.updateOne(
+                    { _id: previousVote.comment },
+                    { $inc: { points: 1 } }
+                ).exec();
+            } else if (previousVote.value === 1) {
+                await CommentVote.updateOne(
+                    { _id: previousVote.id },
+                    { value: -1, registrationDate: new Date() }
+                ).exec();
+                await Comment.updateOne(
+                    { _id: previousVote.comment },
+                    { $inc: { points: -2 } }
+                ).exec();
+            }
+        }
+
+        const newComment = await Comment.findById(commentID);
+
+        return res
+            .status(200)
+            .json({ comment: await newComment.getPrepared(req.user.id) });
+    } else {
+        await new CommentVote({
+            user: req.user.id,
+            url: urlID,
+            comment: commentID,
+            value: voteValue
+        })
+            .save()
+            .then(async () => {
+                await Comment.updateOne(
+                    { _id: commentID },
+                    { $inc: { points: voteValue } }
+                );
+
+                const newComment = await Comment.findById(commentID);
+
+                return res.status(201).json({
+                    comment: await newComment.getPrepared(req.user.id)
+                });
+            })
+            .catch(() => {
+                return res.status(500).json({ error: 'An error occurred' });
+            });
+    }
 });
 
 // Get URL by URL (create if doesn't exist)

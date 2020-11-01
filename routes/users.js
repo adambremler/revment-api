@@ -51,7 +51,7 @@ router.post('/sign-up', async (req, res) => {
 
                     // Create token - send it with response
                     const token = jwt.sign(payload, process.env.JWTSECRET, {
-                        expiresIn: 2500
+                        expiresIn: '1d'
                     });
 
                     return res.json({
@@ -88,7 +88,7 @@ router.post('/log-in', (req, res) => {
                         };
 
                         let token = jwt.sign(payload, process.env.JWTSECRET, {
-                            expiresIn: 2500
+                            expiresIn: '1d'
                         });
 
                         return res.json({

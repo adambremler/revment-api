@@ -21,6 +21,14 @@ const CommentSchema = new mongoose.Schema({
         default: 0,
         required: true
     },
+    parentComment: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Comment'
+    },
+    parentCommentsCount: {
+        type: Number,
+        required: true
+    },
     registrationDate: {
         type: Date,
         default: Date.now,
@@ -28,10 +36,17 @@ const CommentSchema = new mongoose.Schema({
     }
 });
 
-CommentSchema.methods.getPrepared = async function getPrepared() {
+CommentSchema.methods.getPrepared = async function getPrepared(userID = null) {
     const comment = await this.model('Comment')
         .findById(this.id)
         .populate('user');
+
+    if (userID) {
+        var vote = await this.model('CommentVote').findOne({
+            comment: comment.id,
+            user: userID
+        });
+    }
 
     return {
         id: comment.id,
@@ -42,6 +57,9 @@ CommentSchema.methods.getPrepared = async function getPrepared() {
         },
         text: comment.text,
         points: comment.points,
+        parentComment: comment.parentComment,
+        parentCommentsCount: comment.parentCommentsCount,
+        ...(vote ? { voteValue: vote.value } : {}),
         registrationDate: comment.registrationDate
     };
 };
