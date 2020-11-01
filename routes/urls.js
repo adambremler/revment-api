@@ -42,6 +42,100 @@ router.get('/search', async (req, res) => {
     });
 });
 
+// Get URL by URL (create if doesn't exist)
+router.get('/by-url', async (req, res) => {
+    const inputURL = req.query.url;
+
+    if (!inputURL) {
+        return res.status(400).json({ error: 'No URL received' });
+    }
+
+    urlToSave = getComparableURL(inputURL);
+
+    // Better solution later, JSON to prevent differences in parameter order?
+    const existingURL = await URLModel.findOne({ url: urlToSave });
+
+    if (existingURL) {
+        return res.json({
+            url: await existingURL.getPrepared(req.user.id)
+        });
+    }
+
+    if (!req.user) {
+        return res
+            .status(401)
+            .json({ error: 'You need to be logged in to register a URL' });
+    }
+
+    normalizedURL = normalizeUrl(urlToSave);
+
+    if (!(await isReachable(normalizedURL))) {
+        return res.status(400).json({ error: 'Invalid URL' });
+    }
+
+    let screenshotPath = null;
+
+    do {
+        const screenshotID = uuidv4();
+
+        screenshotPath = `images/urls/screenshots/${screenshotID}.png`;
+    } while (await URLModel.findOne({ screenshotPath }));
+
+    const browser = await puppeteer.launch({
+        defaultViewport: {
+            width: 1280,
+            height: 720,
+            deviceScaleFactor: 1
+        }
+    });
+
+    const page = await browser.newPage();
+    await page.goto(normalizedURL);
+
+    let faviconPath = null;
+
+    const faviconURL = `https://www.google.com/s2/favicons?domain=${normalizedURL}`;
+
+    do {
+        const faviconID = uuidv4();
+
+        faviconPath = `images/urls/favicons/${faviconID}.jpg`;
+    } while (await URLModel.findOne({ faviconPath }));
+
+    const downloadOptions = {
+        url: faviconURL,
+        dest: `public/${faviconPath}`
+    };
+
+    try {
+        await download.image(downloadOptions);
+    } catch (e) {
+        return res.status(500).json({ error: 'An error occurred' });
+    }
+
+    const title = (await page.title()) || 'No title found';
+    await page.screenshot({ path: `public/${screenshotPath}` });
+
+    await browser.close();
+
+    await new URLModel({
+        url: urlToSave,
+        screenshotPath,
+        faviconPath,
+        title,
+        registeredBy: req.user.id
+    })
+        .save()
+        .then(async url => {
+            return res.status(201).json({
+                url: await url.getPrepared(req.user.id)
+            });
+        })
+        .catch(() => {
+            return res.status(500).json({ error: 'An error occurred' });
+        });
+});
+
 // Get URL by ID
 router.get('/:id', async (req, res) => {
     const id = req.params.id;
@@ -342,98 +436,19 @@ router.post('/:urlID/comments/:commentID/vote', async (req, res) => {
     }
 });
 
-// Get URL by URL (create if doesn't exist)
+// Get URLs
 router.get('/', async (req, res) => {
-    const inputURL = req.query.url;
+    const urls = await Promise.all(
+        (await URLModel.find()
+            .sort({ registrationDate: 'desc' })
+            .limit(50)).map(async url => await url.getPrepared(req.user.id))
+    );
 
-    if (!inputURL) {
-        return res.status(400).json({ error: 'No URL received' });
+    if (!urls) {
+        return res.status(400).json({ error: 'Could not find URLs' });
     }
 
-    urlToSave = getComparableURL(inputURL);
-
-    // Better solution later, JSON to prevent differences in parameter order?
-    const existingURL = await URLModel.findOne({ url: urlToSave });
-
-    if (existingURL) {
-        return res.json({
-            url: await existingURL.getPrepared(req.user.id)
-        });
-    }
-
-    if (!req.user) {
-        return res
-            .status(401)
-            .json({ error: 'You need to be logged in to register a URL' });
-    }
-
-    normalizedURL = normalizeUrl(urlToSave);
-
-    if (!(await isReachable(normalizedURL))) {
-        return res.status(400).json({ error: 'Invalid URL' });
-    }
-
-    let screenshotPath = null;
-
-    do {
-        const screenshotID = uuidv4();
-
-        screenshotPath = `images/urls/screenshots/${screenshotID}.png`;
-    } while (await URLModel.findOne({ screenshotPath }));
-
-    const browser = await puppeteer.launch({
-        defaultViewport: {
-            width: 1280,
-            height: 720,
-            deviceScaleFactor: 1
-        }
-    });
-
-    const page = await browser.newPage();
-    await page.goto(normalizedURL);
-
-    let faviconPath = null;
-
-    const faviconURL = `https://www.google.com/s2/favicons?domain=${normalizedURL}`;
-
-    do {
-        const faviconID = uuidv4();
-
-        faviconPath = `images/urls/favicons/${faviconID}.jpg`;
-    } while (await URLModel.findOne({ faviconPath }));
-
-    const downloadOptions = {
-        url: faviconURL,
-        dest: `public/${faviconPath}`
-    };
-
-    try {
-        await download.image(downloadOptions);
-    } catch (e) {
-        return res.status(500).json({ error: 'An error occurred' });
-    }
-
-    const title = (await page.title()) || 'No title found';
-    await page.screenshot({ path: `public/${screenshotPath}` });
-
-    await browser.close();
-
-    await new URLModel({
-        url: urlToSave,
-        screenshotPath,
-        faviconPath,
-        title,
-        registeredBy: req.user.id
-    })
-        .save()
-        .then(async url => {
-            return res.status(201).json({
-                url: await url.getPrepared(req.user.id)
-            });
-        })
-        .catch(() => {
-            return res.status(500).json({ error: 'An error occurred' });
-        });
+    return res.status(200).json({ urls });
 });
 
 module.exports = router;
